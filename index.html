@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https://i.ibb.co; connect-src https://script.google.com https://script.googleusercontent.com; form-action 'none'; base-uri 'none'">
+  <title>MC_Ai_R</title>
+  <link rel="icon" type="image/png" href="img/logo.png">
+  <link rel="apple-touch-icon" href="img/logo.png">
+  <link rel="preconnect" href="https://script.google.com" crossorigin>
+  <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="one.css">
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true"></div>
+  <main class="shell">
+    <header class="brand">
+      <img class="brand-logo" src="img/logo.png" alt="" width="44" height="44">
+      <div>
+        <h1 class="brand-name latin">MC_Ai_R</h1>
+        <p class="brand-sub">إدارة صنع الأكواد لمنصة <span class="latin">MC_Ai</span></p>
+      </div>
+    </header>
+
+    <section id="view-loading" class="card skeleton" aria-hidden="true">
+      <div class="sk-row">
+        <span class="sk round"></span>
+        <div class="sk-col">
+          <span class="sk w60"></span>
+          <span class="sk w40"></span>
+        </div>
+      </div>
+      <span class="sk"></span>
+      <span class="sk w80"></span>
+    </section>
+
+    <section id="view-auth" class="card" hidden>
+      <div class="tabs" role="tablist" aria-label="الدخول إلى المنصة" data-active="login">
+        <button type="button" role="tab" id="tab-login" aria-controls="form-login" aria-selected="true" data-tab="login">تسجيل الدخول</button>
+        <button type="button" role="tab" id="tab-register" aria-controls="form-register" aria-selected="false" tabindex="-1" data-tab="register">إنشاء حساب</button>
+        <span class="tab-indicator" aria-hidden="true"></span>
+      </div>
+
+      <form id="form-login" class="form" role="tabpanel" aria-labelledby="tab-login" novalidate>
+        <div class="field">
+          <label for="login-name">الاسم</label>
+          <div class="input-wrap">
+            <i class="lead fa-regular fa-user fa-fw" aria-hidden="true"></i>
+            <input id="login-name" name="username" type="text" autocomplete="username" maxlength="24" spellcheck="false" autocapitalize="off" required>
+          </div>
+        </div>
+        <div class="field">
+          <label for="login-pass">كلمة المرور</label>
+          <div class="input-wrap has-toggle">
+            <i class="lead fa-solid fa-lock fa-fw" aria-hidden="true"></i>
+            <input id="login-pass" name="password" type="password" autocomplete="current-password" maxlength="64" required>
+            <button type="button" class="ghost icon" data-toggle="login-pass" aria-label="إظهار"><i class="fa-regular fa-eye fa-fw"></i></button>
+          </div>
+        </div>
+        <p id="login-status" class="status" aria-live="polite"></p>
+        <button type="submit" class="primary"><span class="label">دخول</span></button>
+      </form>
+
+      <form id="form-register" class="form" role="tabpanel" aria-labelledby="tab-register" novalidate hidden>
+        <div class="pick">
+          <input id="reg-avatar-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+          <button type="button" id="reg-avatar-btn" class="avatar" aria-label="اختيار صورة شخصية">
+            <span class="avatar-face">
+              <span id="reg-avatar-fallback" class="avatar-fallback"><i class="fa-regular fa-user"></i></span>
+              <img id="reg-avatar-img" alt="" hidden>
+            </span>
+            <span class="avatar-badge"><i class="fa-solid fa-camera"></i></span>
+          </button>
+          <p class="hint">صورة شخصية، اختياري</p>
+        </div>
+        <div class="field">
+          <label for="reg-name">الاسم</label>
+          <div class="input-wrap">
+            <i class="lead fa-regular fa-user fa-fw" aria-hidden="true"></i>
+            <input id="reg-name" name="username" type="text" autocomplete="username" maxlength="24" spellcheck="false" autocapitalize="off" required>
+          </div>
+          <p class="hint">من 3 إلى 24 حرفا: حروف وأرقام ونقطة وشرطة</p>
+        </div>
+        <div class="field">
+          <label for="reg-pass">كلمة المرور</label>
+          <div class="input-wrap has-toggle">
+            <i class="lead fa-solid fa-lock fa-fw" aria-hidden="true"></i>
+            <input id="reg-pass" name="new-password" type="password" autocomplete="new-password" maxlength="64" required>
+            <button type="button" class="ghost icon" data-toggle="reg-pass" aria-label="إظهار"><i class="fa-regular fa-eye fa-fw"></i></button>
+          </div>
+          <p class="hint">8 أحرف على الأقل</p>
+        </div>
+        <div class="field">
+          <label for="reg-age">العمر</label>
+          <div class="input-wrap">
+            <i class="lead fa-regular fa-calendar fa-fw" aria-hidden="true"></i>
+            <input id="reg-age" name="age" type="number" inputmode="numeric" min="10" max="100" step="1" required>
+          </div>
+        </div>
+        <fieldset class="field roles">
+          <legend>الرتبة</legend>
+          <div class="segmented">
+            <input type="radio" name="role" id="role-moderator" value="Moderator" checked>
+            <label for="role-moderator"><i class="fa-regular fa-user"></i><span class="latin">Moderator</span></label>
+            <input type="radio" name="role" id="role-admen" value="Admen">
+            <label for="role-admen"><i class="fa-solid fa-shield-halved"></i><span class="latin">Admen</span></label>
+            <input type="radio" name="role" id="role-owner" value="OWNER">
+            <label for="role-owner"><i class="fa-solid fa-crown"></i><span class="latin">OWNER</span></label>
+          </div>
+        </fieldset>
+        <div id="code-reveal" class="reveal" data-open="false" inert>
+          <div class="reveal-inner">
+            <div class="field">
+              <label for="reg-code">كود الصلاحية</label>
+              <div class="input-wrap has-toggle">
+                <i class="lead fa-solid fa-key fa-fw" aria-hidden="true"></i>
+                <input id="reg-code" name="access-code" type="password" autocomplete="off" maxlength="64" spellcheck="false" autocapitalize="characters">
+                <button type="button" class="ghost icon" data-toggle="reg-code" aria-label="إظهار"><i class="fa-regular fa-eye fa-fw"></i></button>
+              </div>
+              <p class="hint">اطلب الكود من مالك المنصة</p>
+            </div>
+          </div>
+        </div>
+        <p id="register-status" class="status" aria-live="polite"></p>
+        <button type="submit" class="primary"><span class="label">إنشاء الحساب</span></button>
+      </form>
+    </section>
+
+    <section id="view-account" class="card" hidden>
+      <div class="profile">
+        <button type="button" id="avatar-btn" class="avatar" aria-label="تغيير الصورة الشخصية">
+          <span class="avatar-face">
+            <span id="avatar-fallback" class="avatar-fallback"></span>
+            <img id="avatar-img" alt="" referrerpolicy="no-referrer" hidden>
+            <span id="avatar-busy" class="avatar-busy" hidden></span>
+          </span>
+          <span class="avatar-badge"><i class="fa-solid fa-camera"></i></span>
+        </button>
+        <div class="who">
+          <h2 id="acc-name" class="who-name" tabindex="-1"></h2>
+          <p class="meta">
+            <span id="acc-role" class="badge latin"></span>
+            <span id="acc-age"></span>
+            <span id="acc-stat" class="stat"></span>
+          </p>
+        </div>
+      </div>
+
+      <div class="tools">
+        <input id="avatar-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        <button type="button" id="avatar-action" class="ghost"><i class="fa-solid fa-arrow-up-from-bracket"></i><span class="label">رفع صورة شخصية</span></button>
+        <p id="account-status" class="status" aria-live="polite"></p>
+      </div>
+
+      <p id="pending-note" class="note" hidden><i class="fa-regular fa-clock"></i><span>حسابك قيد المراجعة. سيتم تفعيله بعد موافقة الإدارة.</span></p>
+
+      <section class="inbox" aria-labelledby="inbox-title">
+        <h3 id="inbox-title">الرسائل</h3>
+        <ul id="msg-list" class="msg-list"></ul>
+        <p id="msg-empty" class="empty">لا توجد رسائل</p>
+      </section>
+
+      <div class="foot">
+        <a id="enter-link" class="primary link" href="main/main.html">الدخول إلى المنصة</a>
+        <button type="button" id="logout-btn" class="ghost">تسجيل الخروج</button>
+      </div>
+    </section>
+  </main>
+  <script src="one.js"></script>
+</body>
+</html>
