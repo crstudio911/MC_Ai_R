@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#0d1117">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https://i.ibb.co; connect-src https://script.google.com https://script.googleusercontent.com; form-action 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https:; connect-src https://script.google.com https://script.googleusercontent.com; form-action 'none'; base-uri 'none'">
   <title>MC_Ai_R</title>
+  <script src="theme.js"></script>
   <link rel="icon" type="image/png" href="img/logo.png">
   <link rel="apple-touch-icon" href="img/logo.png">
   <link rel="preconnect" href="https://script.google.com" crossorigin>
@@ -21,6 +22,7 @@
 <body>
   <div class="backdrop" aria-hidden="true"></div>
   <main class="shell">
+    <button type="button" class="ghost icon theme-btn" data-theme-toggle aria-label="تبديل الوضع"><i class="fa-solid fa-moon"></i><i class="fa-solid fa-sun"></i></button>
     <header class="brand">
       <img class="brand-logo" src="img/logo.png" alt="" width="44" height="44">
       <div>
@@ -70,7 +72,7 @@
 
       <form id="form-register" class="form" role="tabpanel" aria-labelledby="tab-register" novalidate hidden>
         <div class="pick">
-          <input id="reg-avatar-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+          <input id="reg-avatar-input" type="file" accept="image/*" hidden>
           <button type="button" id="reg-avatar-btn" class="avatar" aria-label="اختيار صورة شخصية">
             <span class="avatar-face">
               <span id="reg-avatar-fallback" class="avatar-fallback"><i class="fa-regular fa-user"></i></span>
@@ -154,7 +156,7 @@
       </div>
 
       <div class="tools">
-        <input id="avatar-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        <input id="avatar-input" type="file" accept="image/*" hidden>
         <button type="button" id="avatar-action" class="ghost"><i class="fa-solid fa-arrow-up-from-bracket"></i><span class="label">رفع صورة شخصية</span></button>
         <p id="account-status" class="status" aria-live="polite"></p>
       </div>

@@ -1,5 +1,5 @@
 const CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/AKfycbxHbBkEpV9a7xVqjFBBSxXdt8Ii5mTCieN03dtNch3IHCz2HA9qo5EXgGhg0lEjt2vk/exec',
+  API_URL: 'https://script.google.com/macros/s/AKfycbxKXwbR7ejajobrI1iSxrZHuXRk_OBiOuZ86osAddZW4oxzgXcV7wxColCFwr_NVLlw/exec',
   API_HOST_PATTERN: '^https://script\\.google\\.com/',
   HOME_URL: 'main/main.html',
   STORAGE_KEYS: { token: 'mcr_token', user: 'mcr_user', checked: 'mcr_checked' },
@@ -11,8 +11,7 @@ const CONFIG = {
     size: 320,
     quality: 0.86,
     maxBytes: 10485760,
-    types: ['image/jpeg', 'image/png', 'image/webp'],
-    allowedHost: 'https://i.ibb.co/'
+    animatedMax: 2000000
   },
   PRIVILEGED_ROLES: ['OWNER', 'Admen'],
   RULES: {
@@ -33,7 +32,7 @@ const CONFIG = {
     cryptoMissing: 'المتصفح لا يدعم التشفير المطلوب. استخدم متصفحا حديثا',
     generic: 'حدث خطأ غير متوقع',
     sessionExpired: 'انتهت الجلسة. سجل الدخول من جديد',
-    badImage: 'اختر صورة بصيغة JPG أو PNG أو WEBP بحجم أقل من 10 ميجابايت',
+    badImage: 'تعذر استخدام هذه الصورة. جرّب صورة أخرى',
     imageDone: 'تم تحديث الصورة',
     loginBusy: 'جار التحقق',
     registerBusy: 'جار إنشاء الحساب',
@@ -244,9 +243,17 @@ const syncRole = () => {
   if (!open) $('#reg-code').value = '';
 };
 
-const fileError = file => !file || !CONFIG.AVATAR.types.includes(file.type) || file.size > CONFIG.AVATAR.maxBytes;
+const fileError = file => !file || !/^image\//.test(file.type) || file.size > CONFIG.AVATAR.maxBytes || (file.type === 'image/gif' && file.size > CONFIG.AVATAR.animatedMax);
+
+const readFile = file => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result));
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(file);
+});
 
 const prepareAvatar = async file => {
+  if (file.type === 'image/gif') return readFile(file);
   const bitmap = await createImageBitmap(file);
   const size = CONFIG.AVATAR.size;
   const side = Math.min(bitmap.width, bitmap.height);
@@ -277,7 +284,7 @@ const setAvatar = (src, name) => {
 };
 
 const renderAvatar = user => {
-  const usable = typeof user.img === 'string' && user.img.startsWith(CONFIG.AVATAR.allowedHost);
+  const usable = typeof user.img === 'string' && /^https:\/\//.test(user.img);
   setAvatar(usable ? user.img : '', user.name);
   $('#avatar-btn').dataset.role = user.role;
   $('#avatar-action .label').textContent = CONFIG.TEXT.avatarAdd;

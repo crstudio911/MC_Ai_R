@@ -2,24 +2,30 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0e1116">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https://i.ibb.co; connect-src https://script.google.com https://script.googleusercontent.com; form-action 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https:; connect-src https://script.google.com https://script.googleusercontent.com; form-action 'none'; base-uri 'none'">
   <title>MC_Ai_R</title>
+  <script src="../theme.js"></script>
   <link rel="icon" type="image/png" href="../img/logo.png">
+  <link rel="preconnect" href="https://script.google.com" crossorigin>
+  <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link rel="stylesheet" href="main.css">
 </head>
 <body>
-  <div class="aurora" aria-hidden="true"></div>
   <header class="top">
     <div class="me">
       <span class="ava"><span id="me-fb"></span><img id="me-img" alt="" referrerpolicy="no-referrer" hidden></span>
       <div class="me-text"><b id="me-name"></b><span id="me-role" class="badge latin"></span></div>
     </div>
-    <div class="brand"><img src="../img/logo.png" alt="" width="32" height="32"><b class="latin">MC_Ai_R</b></div>
+    <div class="top-end">
+      <button type="button" class="icon-btn" data-theme-toggle aria-label="تبديل الوضع"><i class="fa-solid fa-moon"></i><i class="fa-solid fa-sun"></i></button>
+      <div class="brand"><img src="../img/logo.png" alt="" width="28" height="28"><b class="latin">MC_Ai_R</b></div>
+    </div>
   </header>
   <div class="layout">
     <nav id="nav" class="nav" aria-label="الأقسام" data-open="false">
@@ -29,14 +35,11 @@
     <div id="scrim" class="scrim" hidden></div>
     <main id="stage" class="stage" tabindex="-1"></main>
   </div>
-  <dialog id="dlg" class="dlg">
+  <dialog id="dlg" class="dlg" aria-labelledby="dlg-title">
     <h3 id="dlg-title"></h3>
     <div id="dlg-body"></div>
     <p id="dlg-err" class="msg" aria-live="polite"></p>
-    <div class="row end">
-      <button type="button" class="btn ghost" id="dlg-cancel">إلغاء</button>
-      <button type="button" class="btn" id="dlg-ok">تأكيد</button>
-    </div>
+    <div class="row end"><button type="button" class="btn ghost" id="dlg-cancel">إلغاء</button><button type="button" class="btn" id="dlg-ok">تأكيد</button></div>
   </dialog>
   <div id="toast" class="toast" role="status" hidden></div>
   <script src="main.js"></script>
