@@ -1,33 +1,30 @@
-import { 
-  db, 
-  rtdb, 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
+import {
+  auth,
+  authReady,
+  db,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
   writeBatch,
-  ref, 
-  set, 
-  get, 
-  remove,
-  update,
-  authReady
+  signOut
 } from './firebase-config.js';
+import { api, describeApiError } from '../api.js';
 import { prepareImage, uploadAvatar, describeError } from '../upload.js';
 const C = {
   LOGIN: '../index.html',
-  K: { t: 'mcr_token', u: 'mcr_user', n: 'mcr_nav' },
+  K: { n: 'mcr_nav' },
   ROLE: { OWNER: 'المالك', Admen: 'أدمن', Moderator: 'موديريتور' },
   STAT: { m3lk: 'معلق', done: 'مفعل', ban: 'محظور', active: 'نشط', inactive: 'متوقف' },
   KIND: { trial: 'كود تجريبي', regular: 'كود حقيقي', recharge: 'شحن' },
-  RESELLER_BASE: 'http://52.21.185.77:3000/api/v1/reseller'
+  COOLDOWNS: [{ s: 180, t: '3 دقائق' }, { s: 300, t: '5 دقائق' }, { s: 600, t: '10 دقائق' }, { s: 900, t: '15 دقيقة' }, { s: 1800, t: '30 دقيقة' }, { s: 3600, t: 'ساعة' }],
+  PAGE: 25,
+  LOW_TEXT: 'نفد الرصيد، تواصل مع الإدارة'
 };
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -36,20 +33,19 @@ const num = v => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits:
 const when = v => v ? new Date(v).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : '-';
 const store = {
   get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
-  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { return; } },
-  del: k => { try { localStorage.removeItem(k); } catch (e) { return; } }
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { return; } }
 };
 const S = { user: null, view: '' };
 const isOwner = () => S.user && S.user.role === 'OWNER';
-const leave = () => {
-  store.del(C.K.t);
-  store.del(C.K.u);
+const leave = async () => {
+  try { await signOut(auth); } catch (e) { console.warn(e); }
   location.replace(C.LOGIN);
 };
 const toast = (msg, tone = 'ok') => {
   const el = $('#toast');
   if (!el) return;
   el.textContent = msg;
+  el.dataset.tone = tone;
   el.className = 'toast ' + tone;
   el.hidden = false;
   setTimeout(() => { el.hidden = true; }, 3200);
@@ -101,14 +97,7 @@ const go = async name => {
     await views[name]();
   } catch (e) {
     console.error(e);
-    stage(`<div class="fault"><p class="msg">حدث خطأ أثناء تحميل الصفحة</p></div>`);
-  }
-};
-const mirror = async (uid, data) => {
-  try {
-    await update(ref(rtdb, 'users/' + uid), data);
-  } catch (e) {
-    console.warn(e);
+    stage(`<div class="fault"><p class="msg">تعذر تحميل الصفحة، حاول مرة أخرى</p></div>`);
   }
 };
 const initial = name => (Array.from(name || '')[0] || '').toUpperCase();
@@ -123,13 +112,50 @@ const wipe = async ids => {
 const copy = async text => {
   try { await navigator.clipboard.writeText(text); toast('تم النسخ'); } catch (e) { toast('تعذر النسخ', 'err'); }
 };
+const dlgOpen = (title, body, okLabel, onOk, cancelLabel = 'إلغاء') => {
+  const dlg = $('#dlg');
+  const ok = $('#dlg-ok');
+  const cancel = $('#dlg-cancel');
+  const err = $('#dlg-err');
+  $('#dlg-title').textContent = title;
+  $('#dlg-body').innerHTML = body;
+  err.textContent = '';
+  ok.hidden = !onOk;
+  ok.textContent = okLabel || 'تأكيد';
+  ok.disabled = false;
+  cancel.textContent = cancelLabel;
+  cancel.onclick = () => dlg.close();
+  ok.onclick = async () => {
+    ok.disabled = true;
+    err.textContent = '';
+    try {
+      const keep = await onOk();
+      if (keep !== false) dlg.close();
+    } catch (e) {
+      err.textContent = describeApiError(e);
+    } finally {
+      ok.disabled = false;
+    }
+  };
+  if (!dlg.open) dlg.showModal();
+  return dlg;
+};
+const statusPill = s => (s === 'active' || s === 'inactive') ? `<span class="pill ${s}">${C.STAT[s]}</span>` : '';
+const cooldownText = sec => {
+  const n = Number(sec) || 0;
+  if (!n) return '';
+  return n % 60 === 0 ? (n / 60) + ' د' : n + ' ث';
+};
 const views = {
   async overview() {
-    stage(`${head('نظرة عامة', 'إحصائيات من Firebase')}
+    stage(`${head('نظرة عامة', 'إحصائيات الحسابات والأكواد')}
 <div class="kpis" id="ov-kpis"><div class="kpi"><span>جاري التحميل...</span></div></div>
+<div class="kpis" id="ov-srv"></div>
 <div class="panel"><h3>أحدث النشاطات</h3><div class="list" id="ov-recent"></div></div>`);
-    const actSnap = await getDocs(query(collection(db, 'activity'), orderBy('time', 'desc')));
-    const usersSnap = await getDocs(collection(db, 'users'));
+    const [actSnap, usersSnap] = await Promise.all([
+      getDocs(query(collection(db, 'activity'), orderBy('time', 'desc'))),
+      getDocs(collection(db, 'users'))
+    ]);
     let trialCount = 0;
     let regularCount = 0;
     let totalCredits = 0;
@@ -147,109 +173,239 @@ const views = {
       <div class="kpi"><span><i class="fa-solid fa-coins"></i>إجمالي النقاط</span><b>${num(totalCredits)}</b></div>
       <div class="kpi"><span><i class="fa-solid fa-users"></i>إجمالي الأعضاء</span><b>${num(usersSnap.size)}</b></div>
     `;
-    const recentHtml = acts.slice(0, 10).map(a => `
+    $('#ov-recent').innerHTML = acts.slice(0, 10).map(a => `
       <div class="item">
         <div class="info">
           <b>${esc(a.name || 'عضو')} <span class="pill">${esc(C.KIND[a.kind] || a.kind)}</span></b>
-          <small>${esc(a.key || '-')} · ${num(a.credits)} نقطة · ${when(a.time)}</small>
+          <small class="latin">${esc(a.key || '-')} · ${num(a.credits)} · ${when(a.time)}</small>
         </div>
       </div>
-    `).join('');
-    $('#ov-recent').innerHTML = recentHtml || '<p class="empty">لا يوجد نشاط مسجل بعد</p>';
+    `).join('') || '<p class="empty">لا يوجد نشاط مسجل بعد</p>';
+    try {
+      const b = await api('/balance');
+      $('#ov-srv').innerHTML = `
+        <div class="kpi"><span><i class="fa-solid fa-wallet"></i>رصيد الحساب</span><b>${num(b.balance)}</b></div>
+        <div class="kpi"><span><i class="fa-solid fa-gift"></i>النقاط التجريبية</span><b>${num(b.trial)}</b></div>
+        <div class="kpi"><span><i class="fa-solid fa-layer-group"></i>إجمالي الأكواد</span><b>${num(b.total_keys)}</b></div>
+        <div class="kpi"><span><i class="fa-solid fa-laptop"></i>الأجهزة النشطة</span><b>${num(b.active_devices)}</b></div>
+      `;
+    } catch (e) {
+      $('#ov-srv').innerHTML = `<div class="kpi"><span><i class="fa-solid fa-wallet"></i>رصيد الحساب</span><b>-</b></div>`;
+    }
   },
   async keys() {
-    const priv = S.user.role !== 'Moderator';
-    stage(`${head('الأكواد', 'إنشاء الأكواد وإدارتها ومتابعتها')}
+    const owner = isOwner();
+    const cool = C.COOLDOWNS.map(o => `<option value="${o.s}">${o.t}</option>`).join('');
+    const switches = [5, 6, 7, 8, 9, 10, 11, 12].map(n => `<option value="${n}">${n}</option>`).join('');
+    stage(`${head('الأكواد', owner ? 'كل الأكواد وإدارتها' : 'الأكواد التي أنشأتها')}
 <div class="panel">
-  <h3>إنشاء كود جديد</h3>
+  <h3>إنشاء كود جديد <small>الرصيد: <b id="k-bal" class="latin">...</b></small></h3>
   <div class="pb">
     <div class="seg">
-      <button type="button" id="type-trial" class="btn" aria-pressed="true">تجريبي</button>
-      <button type="button" id="type-regular" class="btn ghost" aria-pressed="false">حقيقي</button>
+      <button type="button" id="type-trial" aria-pressed="true">تجريبي</button>
+      <button type="button" id="type-regular" aria-pressed="false">حقيقي</button>
     </div>
     <div class="form">
       <div class="f"><label for="k-name">اسم العميل</label><input id="k-name" maxlength="60"></div>
       <div class="f"><label for="k-mail">إيميل العميل</label><input id="k-mail" type="email" maxlength="80" dir="ltr"></div>
       <div class="f reg" hidden><label for="k-cr">النقاط</label><input id="k-cr" type="number" min="50" value="200" dir="ltr"></div>
+      <div class="f reg" hidden><label for="k-dev">عدد الأجهزة</label><input id="k-dev" type="number" min="1" max="20" value="1" dir="ltr"></div>
+      <div class="f reg" hidden><label for="k-sw">التبديل اليومي</label><select id="k-sw">${switches}</select></div>
+      <div class="f reg" hidden><label for="k-cd">مدة الانتظار بين التبديلات</label><select id="k-cd">${cool}</select></div>
     </div>
     <div class="row end"><button type="button" class="btn" id="k-go"><i class="fa-solid fa-plus"></i><span>إنشاء الكود</span></button></div>
+    <p id="k-low" class="msg" hidden>${C.LOW_TEXT}</p>
     <p id="k-msg" class="msg"></p>
     <div id="k-out"></div>
   </div>
 </div>
 <div class="panel">
-  <h3>سجل الأكواد المسجلة في Firebase</h3>
+  <h3>${owner ? 'كل الأكواد' : 'أكوادي'}</h3>
+  <div class="tools">
+    <input id="k-find" type="search" placeholder="بحث بالكود أو الاسم" maxlength="60">
+    <select id="k-state"><option value="">كل الحالات</option><option value="active">نشط</option><option value="inactive">متوقف</option></select>
+    <button type="button" class="btn ghost" id="k-refresh"><i class="fa-solid fa-rotate"></i><span>تحديث</span></button>
+  </div>
   <div class="list" id="k-list"></div>
+  <div class="more" id="k-more" hidden><button type="button" class="btn ghost" id="k-more-btn">عرض المزيد</button></div>
 </div>`);
     let currentType = 'trial';
-    $('#type-trial').onclick = () => {
-      currentType = 'trial';
-      $('#type-trial').className = 'btn';
-      $('#type-regular').className = 'btn ghost';
-      $$('.reg').forEach(e => e.hidden = true);
+    let rows = [];
+    let offset = 0;
+    let timer = 0;
+    const setType = t => {
+      currentType = t;
+      $('#type-trial').setAttribute('aria-pressed', String(t === 'trial'));
+      $('#type-regular').setAttribute('aria-pressed', String(t === 'regular'));
+      $$('.reg').forEach(e => { e.hidden = t !== 'regular'; });
     };
-    $('#type-regular').onclick = () => {
-      currentType = 'regular';
-      $('#type-regular').className = 'btn';
-      $('#type-trial').className = 'btn ghost';
-      $$('.reg').forEach(e => e.hidden = false);
-    };
-    const loadList = async () => {
-      let qy = query(collection(db, 'activity'), orderBy('time', 'desc'));
-      if (!priv) {
-        qy = query(collection(db, 'activity'), where('uid', '==', S.user.id));
+    $('#type-trial').onclick = () => setType('trial');
+    $('#type-regular').onclick = () => setType('regular');
+    const paintBalance = async () => {
+      try {
+        const b = await api('/balance');
+        $('#k-bal').textContent = num(b.balance);
+        $('#k-low').hidden = b.balance > 0;
+      } catch (e) {
+        $('#k-bal').textContent = '-';
       }
-      const snap = await getDocs(qy);
-      const rows = [];
-      snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
+    };
+    const paintRows = () => {
       $('#k-list').innerHTML = rows.length ? rows.map(k => `
         <div class="item">
           <div class="info">
-            <b class="latin">${esc(k.key || 'كود')} <span class="pill ${esc(k.kind)}">${esc(C.KIND[k.kind] || k.kind)}</span></b>
-            <small>بواسطة: ${esc(k.name)} · النقاط: ${num(k.credits)} · ${when(k.time)}</small>
+            <b class="latin">${esc(k.key)} ${statusPill(k.status)}</b>
+            <small>${esc(k.customer_name || 'بدون اسم')} · النقاط: ${num(k.credits)}${k.max_devices ? ` · الأجهزة: ${num(k.device_count)}/${num(k.max_devices)}` : ''}${k.daily_switch_limit ? ` · التبديل: ${num(k.daily_switch_limit)} يوميا` : ''}${cooldownText(k.switch_cooldown_seconds) ? ` · الانتظار: ${cooldownText(k.switch_cooldown_seconds)}` : ''}${owner && k.by ? ` · بواسطة: ${esc(k.by)}` : ''}</small>
           </div>
           <div class="acts">
-            ${k.key ? `<button type="button" class="btn ghost sm" data-copy="${esc(k.key)}"><i class="fa-regular fa-copy"></i>نسخ</button>` : ''}
+            <button type="button" class="btn ghost sm" data-act="copy" data-key="${esc(k.key)}"><i class="fa-regular fa-copy"></i>نسخ</button>
+            <button type="button" class="btn ghost sm" data-act="charge" data-key="${esc(k.key)}"><i class="fa-solid fa-bolt"></i>شحن</button>
+            <button type="button" class="btn ghost sm" data-act="rename" data-key="${esc(k.key)}"><i class="fa-solid fa-pen"></i>الاسم</button>
+            <button type="button" class="btn ghost sm" data-act="devices" data-key="${esc(k.key)}"><i class="fa-solid fa-laptop"></i>الأجهزة</button>
+            <button type="button" class="btn ${k.status === 'inactive' ? '' : 'danger'} sm" data-act="toggle" data-key="${esc(k.key)}" data-to="${k.status === 'inactive' ? 'active' : 'inactive'}"><i class="fa-solid fa-power-off"></i>${k.status === 'inactive' ? 'تفعيل' : 'تعطيل'}</button>
           </div>
         </div>
-      `).join('') : '<p class="empty">لا توجد أكواد مسجلة</p>';
-      $$('[data-copy]').forEach(b => {
-        b.onclick = () => copy(b.dataset.copy);
-      });
+      `).join('') : '<p class="empty">لا توجد أكواد</p>';
     };
-    $('#k-go').onclick = async () => {
-      const cName = $('#k-name').value.trim();
-      const credits = currentType === 'regular' ? (Number($('#k-cr').value) || 200) : 0;
-      const keyGen = 'MC-' + currentType.toUpperCase() + '-' + Math.random().toString(36).slice(2, 8).toUpperCase() + '-' + Date.now().toString().slice(-4);
-      const actDoc = {
-        time: new Date().toISOString(),
-        uid: S.user.id,
-        name: S.user.name,
-        kind: currentType,
-        key: keyGen,
-        credits: credits,
-        cost: currentType === 'regular' ? Math.round(credits * 0.1) : 0,
-        customer_name: cName,
-        customer_email: $('#k-mail').value.trim()
-      };
+    const load = async more => {
+      if (!more) { offset = 0; rows = []; }
+      const q = new URLSearchParams({ limit: String(C.PAGE), offset: String(offset) });
+      const find = $('#k-find').value.trim();
+      const state = $('#k-state').value;
+      if (find) q.set('search', find);
+      if (state) q.set('status', state);
       try {
-        await setDoc(doc(collection(db, 'activity')), actDoc);
-        toast('تم إنشاء الكود وحفظه بنجاح');
-        $('#k-out').innerHTML = `<div class="keybox"><code>${esc(keyGen)}</code><button type="button" class="btn ghost sm" id="k-cp-btn">نسخ</button></div>`;
-        $('#k-cp-btn').onclick = () => copy(keyGen);
-        loadList();
+        const res = await api('/keys?' + q.toString());
+        rows = rows.concat(res.items);
+        offset += res.items.length;
+        $('#k-more').hidden = !res.has_more;
+        paintRows();
       } catch (e) {
-        console.error(e);
-        toast('تعذر حفظ الكود', 'err');
+        $('#k-list').innerHTML = `<p class="empty">${esc(describeApiError(e))}</p>`;
+        $('#k-more').hidden = true;
       }
     };
-    loadList();
+    const reload = () => Promise.all([load(false), paintBalance()]);
+    const rowOf = key => rows.find(r => r.key === key) || { key };
+    $('#k-list').onclick = e => {
+      const b = e.target.closest('[data-act]');
+      if (!b) return;
+      const key = b.dataset.key;
+      const row = rowOf(key);
+      const act = b.dataset.act;
+      if (act === 'copy') return copy(key);
+      if (act === 'charge') {
+        dlgOpen('شحن الكود', `<p class="latin">${esc(key)}</p><div class="f"><label for="d-cr">عدد النقاط</label><input id="d-cr" type="number" min="1" value="100" dir="ltr"></div>`, 'شحن', async () => {
+          const credits = Number($('#d-cr').value);
+          await api('/keys/' + encodeURIComponent(key) + '/recharge', { method: 'POST', body: { credits } });
+          toast('تم شحن الكود');
+          reload();
+        });
+        return;
+      }
+      if (act === 'rename') {
+        dlgOpen('تعديل اسم العميل', `<p class="latin">${esc(key)}</p><div class="f"><label for="d-nm">الاسم</label><input id="d-nm" maxlength="60" value="${esc(row.customer_name || '')}"></div>`, 'حفظ', async () => {
+          await api('/keys/' + encodeURIComponent(key) + '/update', { method: 'POST', body: { customer_name: $('#d-nm').value.trim() } });
+          toast('تم حفظ الاسم');
+          load(false);
+        });
+        return;
+      }
+      if (act === 'toggle') {
+        const to = b.dataset.to;
+        dlgOpen(to === 'inactive' ? 'تعطيل الكود' : 'تفعيل الكود', `<p class="latin">${esc(key)}</p><p>${to === 'inactive' ? 'سيتوقف الكود عن العمل حتى يتم تفعيله مرة أخرى.' : 'سيعود الكود للعمل مباشرة.'}</p>`, 'تأكيد', async () => {
+          await api('/keys/' + encodeURIComponent(key) + '/update', { method: 'POST', body: { status: to } });
+          toast(to === 'inactive' ? 'تم تعطيل الكود' : 'تم تفعيل الكود');
+          load(false);
+        });
+        return;
+      }
+      if (act === 'devices') {
+        const paint = async () => {
+          const body = $('#dlg-body');
+          try {
+            const res = await api('/keys/' + encodeURIComponent(key) + '/devices');
+            body.innerHTML = `<p class="latin">${esc(key)}</p>` + (res.items.length ? `<div class="list dev-list">${res.items.map(d => `
+              <div class="item"><div class="info"><b class="latin">${esc(d.hwid)}</b><small>${esc([d.label, d.seen].filter(Boolean).join(' · '))}</small></div>
+              <div class="acts"><button type="button" class="btn danger sm" data-hw="${esc(d.hwid)}">فصل</button></div></div>`).join('')}</div>` : '<p class="empty">لا توجد أجهزة متصلة</p>');
+            $('#dlg-ok').hidden = !res.items.length;
+            $$('[data-hw]', body).forEach(x => {
+              x.onclick = async () => {
+                x.disabled = true;
+                try {
+                  await api('/keys/' + encodeURIComponent(key) + '/devices/remove', { method: 'POST', body: { hwid: x.dataset.hw } });
+                  toast('تم فصل الجهاز');
+                  paint();
+                  load(false);
+                } catch (err) {
+                  x.disabled = false;
+                  $('#dlg-err').textContent = describeApiError(err);
+                }
+              };
+            });
+          } catch (err) {
+            body.innerHTML = `<p class="empty">${esc(describeApiError(err))}</p>`;
+            $('#dlg-ok').hidden = true;
+          }
+        };
+        dlgOpen('الأجهزة المتصلة', '<p class="empty">جاري التحميل...</p>', 'فصل كل الأجهزة', async () => {
+          await api('/keys/' + encodeURIComponent(key) + '/devices/remove', { method: 'POST', body: { reset_all: true } });
+          toast('تم فصل كل الأجهزة');
+          await paint();
+          load(false);
+          return false;
+        }, 'إغلاق');
+        paint();
+      }
+    };
+    $('#k-go').onclick = async () => {
+      const btn = $('#k-go');
+      const msg = $('#k-msg');
+      msg.textContent = '';
+      $('#k-out').innerHTML = '';
+      const body = {
+        type: currentType,
+        customer_name: $('#k-name').value.trim(),
+        customer_email: $('#k-mail').value.trim()
+      };
+      if (currentType === 'regular') {
+        body.credits = Number($('#k-cr').value);
+        body.max_devices = Number($('#k-dev').value);
+        body.daily_switches = Number($('#k-sw').value);
+        body.switch_cooldown_seconds = Number($('#k-cd').value);
+        if (!Number.isInteger(body.credits) || body.credits < 50) {
+          msg.textContent = 'أقل عدد نقاط هو 50';
+          return;
+        }
+      }
+      btn.disabled = true;
+      try {
+        const res = await api('/keys', { method: 'POST', body });
+        toast('تم إنشاء الكود بنجاح');
+        $('#k-out').innerHTML = `<div class="keybox"><code>${esc(res.key)}</code><button type="button" class="btn ghost sm" id="k-cp-btn">نسخ</button></div>`;
+        $('#k-cp-btn').onclick = () => copy(res.key);
+        $('#k-name').value = '';
+        $('#k-mail').value = '';
+        reload();
+      } catch (e) {
+        msg.textContent = e && e.code === 'no_credit' ? '' : describeApiError(e);
+        if (e && e.code === 'no_credit') $('#k-low').hidden = false;
+        paintBalance();
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    $('#k-find').oninput = () => { clearTimeout(timer); timer = setTimeout(() => load(false), 400); };
+    $('#k-state').onchange = () => load(false);
+    $('#k-refresh').onclick = reload;
+    $('#k-more-btn').onclick = () => load(true);
+    reload();
   },
   async team() {
     const owner = isOwner();
     stage(`${head(owner ? 'كل الحسابات' : 'الموديريتورز')}
 <div class="panel scroll" id="t-box"><p class="empty">جاري تحميل الفريق...</p></div>`);
-    const snap = await getDocs(collection(db, 'users'));
+    const snap = await getDocs(owner ? collection(db, 'users') : query(collection(db, 'users'), where('role', '==', 'Moderator')));
     const members = [];
     snap.forEach(d => {
       const m = { id: d.id, ...d.data() };
@@ -290,7 +446,6 @@ const views = {
           const newStat = b.dataset.stat;
           try {
             await updateDoc(doc(db, 'users', uid), { stat: newStat });
-            await mirror(uid, { stat: newStat });
             toast('تم تحديث حالة الحساب');
             views.team();
           } catch (e) {
@@ -303,7 +458,7 @@ const views = {
   },
   async storage() {
     if (!isOwner()) return go('profile');
-    stage(`${head('مكان التخزين (قاعدة بيانات Firebase)', 'مراقبة استهلاك المساحة والتحكم الكامل في مسح وتصدير البيانات')}
+    stage(`${head('مكان التخزين', 'متابعة حجم البيانات وإدارة السجلات')}
 <div class="kpis">
   <div class="kpi"><span><i class="fa-solid fa-hard-drive"></i>الحجم المستخدم تقريبياً</span><b id="st-size">جاري الحساب...</b></div>
   <div class="kpi"><span><i class="fa-solid fa-list-check"></i>إجمالي سجلات الأكواد</span><b id="st-act-count">-</b></div>
@@ -312,14 +467,14 @@ const views = {
 <div class="panel">
   <h3><i class="fa-solid fa-download"></i> تصدير ونسخ البيانات</h3>
   <div class="pb">
-    <p class="sec">يمكنك تحميل نسخة احتياطية كاملة من قاعدة البيانات بصيغة JSON تشمل المستخدمين والنشاطات والأكواد.</p>
-    <button type="button" class="btn" id="btn-export"><i class="fa-solid fa-file-arrow-down"></i> تحميل نسخة احتياطية (JSON Backup)</button>
+    <p class="sec">يمكنك تحميل نسخة احتياطية تشمل الأعضاء وسجلات النشاط.</p>
+    <button type="button" class="btn" id="btn-export"><i class="fa-solid fa-file-arrow-down"></i> تحميل نسخة احتياطية</button>
   </div>
 </div>
 <div class="panel">
-  <h3><i class="fa-solid fa-trash-can"></i> قسم المسح المقسم (من قاعدة البيانات فقط بدون لمس الـ API)</h3>
+  <h3><i class="fa-solid fa-trash-can"></i> مسح السجلات</h3>
   <div class="pb">
-    <p class="sec" style="color:var(--warn)">تنبيه: العمليات هنا تقوم بحذف السجلات من Firestore و Realtime Database دون المساس بالـ API أو السيرفر الخارجي.</p>
+    <p class="sec" style="color:var(--warn)">تنبيه: العمليات هنا تحذف سجلات النشاط من اللوحة فقط ولا تؤثر على الأكواد الفعلية للعملاء.</p>
     <div class="form" style="margin-top:1rem;">
       <div class="f">
         <label for="del-moderator">مسح أكواد مستخدم معين (موديريتور أو أدمن):</label>
@@ -339,22 +494,18 @@ const views = {
   </div>
 </div>
 <div class="panel">
-  <h3><i class="fa-solid fa-table"></i> استعراض تفصيلي لسجلات الأكواد في قاعدة البيانات</h3>
+  <h3><i class="fa-solid fa-table"></i> سجلات النشاط</h3>
   <div class="list" id="st-acts-table"></div>
 </div>`);
     const actSnap = await getDocs(collection(db, 'activity'));
     const usrSnap = await getDocs(collection(db, 'users'));
-    const codeSnap = await getDocs(collection(db, 'scr_code'));
     const activities = [];
     actSnap.forEach(d => activities.push({ id: d.id, ...d.data() }));
     const users = [];
     usrSnap.forEach(d => users.push({ id: d.id, ...d.data() }));
-    const codes = [];
-    codeSnap.forEach(d => codes.push({ id: d.id, ...d.data() }));
     const allData = {
       activity: activities,
-      users: users.map(({ password, ...rest }) => rest),
-      scr_code: codes
+      users
     };
     const jsonStr = JSON.stringify(allData);
     const bytes = new Blob([jsonStr]).size;
@@ -389,10 +540,10 @@ const views = {
       if (!targetUid) return toast('يرجى اختيار عضو أولاً', 'err');
       const ids = activities.filter(a => a.uid === targetUid).map(a => a.id);
       if (!ids.length) return toast('لا توجد أكواد مسجلة لهذا العضو');
-      if (!confirm('هل أنت متأكد من مسح جميع أكواد هذا العضو من قاعدة البيانات؟')) return;
+      if (!confirm('هل أنت متأكد من مسح جميع أكواد هذا العضو من اللوحة؟')) return;
       try {
         await wipe(ids);
-        toast(`تم مسح ${ids.length} كود من قاعدة البيانات`);
+        toast(`تم مسح ${ids.length} كود من اللوحة`);
         views.storage();
       } catch (e) {
         console.error(e);
@@ -403,7 +554,7 @@ const views = {
       const modUids = new Set(users.filter(u => u.role === 'Moderator').map(u => u.id));
       const ids = activities.filter(a => modUids.has(a.uid)).map(a => a.id);
       if (!ids.length) return toast('لا توجد أكواد للموديريتورز');
-      if (!confirm('هل تريد فعلاً مسح كل الأكواد التي أنشأها الموديريتورز من قاعدة البيانات؟')) return;
+      if (!confirm('هل تريد فعلاً مسح كل الأكواد التي أنشأها الموديريتورز من اللوحة؟')) return;
       try {
         await wipe(ids);
         toast(`تم مسح ${ids.length} كود للموديريتورز`);
@@ -432,13 +583,13 @@ const views = {
           <small>أنشأه: ${esc(a.name)} (${esc(a.uid)}) · التاريخ: ${when(a.time)}</small>
         </div>
         <div class="acts">
-          <button type="button" class="btn danger sm" data-del-act="${esc(a.id)}"><i class="fa-solid fa-trash"></i> مسح من الداتا بيز</button>
+          <button type="button" class="btn danger sm" data-del-act="${esc(a.id)}"><i class="fa-solid fa-trash"></i> مسح</button>
         </div>
       </div>
     `).join('') : '<p class="empty">لا توجد سجلات</p>';
     $$('[data-del-act]').forEach(b => {
       b.onclick = async () => {
-        if (!confirm('مسح هذا الكود فقط من قاعدة البيانات؟')) return;
+        if (!confirm('مسح هذا الكود فقط من اللوحة؟')) return;
         try {
           await deleteDoc(doc(db, 'activity', b.dataset.delAct));
           toast('تم مسح السجل');
@@ -501,7 +652,6 @@ const views = {
         const blob = await prepareImage(file);
         const url = await uploadAvatar(blob);
         await updateDoc(doc(db, 'users', S.user.id), { img_url: url });
-        await mirror(S.user.id, { img_url: url });
         S.user.img_url = url;
         paintMe();
         paintPhoto();
@@ -515,11 +665,10 @@ const views = {
     };
   }
 };
-const boot = async () => {
-  const token = store.get(C.K.t);
-  if (!token) return leave();
+const boot = async user => {
+  if (!user) return leave();
   try {
-    const snap = await getDoc(doc(db, 'users', token));
+    const snap = await getDoc(doc(db, 'users', user.uid));
     if (!snap.exists()) return leave();
     const u = snap.data();
     u.id = snap.id;
