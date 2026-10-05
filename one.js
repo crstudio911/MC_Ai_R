@@ -1,18 +1,27 @@
+import { 
+  db, 
+  rtdb, 
+  collection, 
+  doc, 
+  getDoc, 
+  getDocs, 
+  setDoc, 
+  updateDoc, 
+  query, 
+  where,
+  ref,
+  set,
+  get,
+  update,
+  authReady,
+  authStatus
+} from './firebase-config.js';
+import { prepareImage, uploadAvatar, describeError } from './upload.js';
+import { derivePasswordHash } from './hash.js';
 const CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/AKfycbxG1EEHjQf3UtagnjmhS1ntUPZujXOp5wYsMWhraFbxw3yZ6UxO0n2UHivAZ2kXL99V/exec',
-  API_HOST_PATTERN: '^https://script\\.google\\.com/',
   HOME_URL: 'main/main.html',
-  STORAGE_KEYS: { token: 'mcr_token', user: 'mcr_user', checked: 'mcr_checked' },
-  FRESH_MS: 45000,
-  PRECOMPUTE_DELAY_MS: 350,
-  PBKDF2: { iterations: 150000, saltSuffix: ':mc_ai_r:v1' },
-  TIMEOUT_MS: 30000,
-  AVATAR: {
-    size: 320,
-    quality: 0.86,
-    maxBytes: 10485760,
-    animatedMax: 2000000
-  },
+  STORAGE_KEYS: { token: 'mcr_token', user: 'mcr_user' },
+  PBKDF2: { iterations: 100000, saltSuffix: ':mc_ai_r:firebase:v1' },
   PRIVILEGED_ROLES: ['OWNER', 'Admen'],
   RULES: {
     passMin: 8,
@@ -27,542 +36,383 @@ const CONFIG = {
     badPass: 'كلمة المرور من 8 إلى 64 حرفا',
     badAge: 'العمر يجب أن يكون بين 10 و100',
     needCode: 'اكتب كود الصلاحية',
-    network: 'تعذر الاتصال بالخادم. تحقق من الإنترنت وحاول مرة أخرى',
-    notConfigured: 'رابط الخادم غير مضبوط في ملف one.js',
-    cryptoMissing: 'المتصفح لا يدعم التشفير المطلوب. استخدم متصفحا حديثا',
+    wrongCode: 'كود الصلاحية غير صحيح',
+    nameTaken: 'هذا الاسم مستخدم بالفعل',
+    badLogin: 'الاسم أو كلمة المرور غير صحيحة',
+    blocked: 'تم حظر هذا الحساب',
     generic: 'حدث خطأ غير متوقع',
-    sessionExpired: 'انتهت الجلسة. سجل الدخول من جديد',
-    badImage: 'تعذر استخدام هذه الصورة. جرّب صورة أخرى',
-    imageDone: 'تم تحديث الصورة',
-    loginBusy: 'جار التحقق',
-    registerBusy: 'جار إنشاء الحساب',
-    avatarBusy: 'جار الرفع',
-    avatarAdd: 'رفع صورة شخصية',
-    avatarChange: 'تغيير الصورة',
-    showSecret: 'إظهار',
-    hideSecret: 'إخفاء',
-    yearsSuffix: 'سنة',
-    stat: { m3lk: 'معلق', done: 'مفعل', ban: 'محظور' },
-    states: { pending: 'm3lk', approved: 'done', banned: 'ban' }
+    photoOnce: 'تم رفع صورة لهذا الحساب من قبل ولا يمكن تغييرها',
+    photoDone: 'تم رفع الصورة بنجاح',
+    photoLater: 'تم إنشاء الحساب لكن تعذر رفع الصورة، يمكنك رفعها لاحقا من حسابك',
+    photoBusy: 'جار رفع الصورة...',
+    noAccess: 'تعذر الاتصال بقاعدة البيانات: تأكد من مفتاح apiKey وتفعيل الدخول المجهول (Anonymous) في Firebase',
+    keyMissing: 'مفتاح Firebase غير مضبوط: ضع الـ apiKey الحقيقي (يبدأ بـ AIza) داخل firebase-config.js',
+    anonOff: 'الدخول المجهول غير مفعل: فعّل Anonymous من Firebase Authentication ثم Sign-in method',
+    offline: 'تعذر الوصول إلى خوادم Firebase: تأكد من الاتصال بالإنترنت',
+    loginBusy: 'جار التحقق...',
+    registerBusy: 'جار إنشاء الحساب...',
+    stat: { m3lk: 'معلق', done: 'مفعل', ban: 'محظور' }
   }
 };
-
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
-
 const nameRule = new RegExp(CONFIG.RULES.namePattern, 'u');
-const apiRule = new RegExp(CONFIG.API_HOST_PATTERN);
-
-const state = { tab: 'login', busy: false, uploading: false, draft: '' };
-
+const storage = {
+  read(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  write(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  remove(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+function hashPassword(username, password) {
+  return derivePasswordHash(password, username.toLowerCase() + CONFIG.PBKDF2.saltSuffix, CONFIG.PBKDF2.iterations);
+}
+const state = { user: null, regBlob: null, regPreview: '' };
 const views = {
   loading: $('#view-loading'),
   auth: $('#view-auth'),
   account: $('#view-account')
 };
-
-const storage = {
-  read(key) {
-    try {
-      return window.localStorage.getItem(key);
-    } catch (error) {
-      return null;
-    }
-  },
-  write(key, value) {
-    try {
-      window.localStorage.setItem(key, value);
-    } catch (error) {
-      return;
-    }
-  },
-  remove(key) {
-    try {
-      window.localStorage.removeItem(key);
-    } catch (error) {
-      return;
-    }
+function showView(name) {
+  Object.keys(views).forEach(k => {
+    if (views[k]) views[k].hidden = (k !== name);
+  });
+}
+function accessText() {
+  let text = CONFIG.TEXT.noAccess;
+  if (authStatus.error === 'key') text = CONFIG.TEXT.keyMissing;
+  if (authStatus.error === 'anonymous') text = CONFIG.TEXT.anonOff;
+  if (authStatus.error === 'network') text = CONFIG.TEXT.offline;
+  return authStatus.code ? text + ' [' + authStatus.code + ']' : text;
+}
+function setMsg(id, text, isOk = false) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = isOk ? 'var(--ok, #4cc38a)' : 'var(--danger, #ff7b7b)';
+}
+function initTabs() {
+  const tabs = $('.tabs');
+  const tabLogin = $('#tab-login');
+  const tabReg = $('#tab-register');
+  const formLogin = $('#form-login');
+  const formReg = $('#form-register');
+  const codeReveal = $('#code-reveal');
+  const select = name => {
+    const isLogin = name === 'login';
+    tabs.dataset.active = name;
+    tabLogin.setAttribute('aria-selected', String(isLogin));
+    tabLogin.tabIndex = isLogin ? 0 : -1;
+    tabReg.setAttribute('aria-selected', String(!isLogin));
+    tabReg.tabIndex = isLogin ? -1 : 0;
+    formLogin.hidden = !isLogin;
+    formReg.hidden = isLogin;
+  };
+  if (tabs && tabLogin && tabReg) {
+    tabLogin.onclick = () => select('login');
+    tabReg.onclick = () => select('register');
   }
-};
-
-const session = {
-  token() {
-    return storage.read(CONFIG.STORAGE_KEYS.token);
-  },
-  user() {
+  $$('input[name="role"]').forEach(r => {
+    r.onchange = () => {
+      const isPriv = CONFIG.PRIVILEGED_ROLES.includes(r.value);
+      if (codeReveal) {
+        codeReveal.dataset.open = String(isPriv);
+        codeReveal.inert = !isPriv;
+      }
+    };
+  });
+  $$('[data-toggle]').forEach(btn => {
+    btn.onclick = () => {
+      const targetId = btn.dataset.toggle;
+      const input = $('#' + targetId);
+      if (input) {
+        input.type = input.type === 'password' ? 'text' : 'password';
+      }
+    };
+  });
+}
+function initAvatars() {
+  const regInput = $('#reg-avatar-input');
+  const regBtn = $('#reg-avatar-btn');
+  const regImg = $('#reg-avatar-img');
+  const regFallback = $('#reg-avatar-fallback');
+  regBtn.onclick = () => regInput.click();
+  regInput.onchange = async () => {
+    const file = regInput.files[0];
+    regInput.value = '';
+    if (!file) return;
+    setMsg('#register-status', '');
     try {
-      const raw = storage.read(CONFIG.STORAGE_KEYS.user);
-      return raw ? JSON.parse(raw) : null;
-    } catch (error) {
-      return null;
+      const blob = await prepareImage(file);
+      if (state.regPreview) URL.revokeObjectURL(state.regPreview);
+      state.regBlob = blob;
+      state.regPreview = URL.createObjectURL(blob);
+      regImg.src = state.regPreview;
+      regImg.hidden = false;
+      regFallback.hidden = true;
+    } catch (err) {
+      console.error(err);
+      setMsg('#register-status', describeError(err));
     }
-  },
-  checkedAt() {
-    return Number(storage.read(CONFIG.STORAGE_KEYS.checked) || 0);
-  },
-  save(token, user) {
-    if (token) storage.write(CONFIG.STORAGE_KEYS.token, token);
-    if (user) {
-      storage.write(CONFIG.STORAGE_KEYS.user, JSON.stringify(user));
-      storage.write(CONFIG.STORAGE_KEYS.checked, String(Date.now()));
+  };
+  const accBtn = $('#avatar-btn');
+  const accAction = $('#avatar-action');
+  const accInput = $('#avatar-input');
+  const askFile = () => {
+    const u = state.user;
+    if (!u) return;
+    if (u.img_url) return setMsg('#account-status', CONFIG.TEXT.photoOnce);
+    accInput.click();
+  };
+  accBtn.onclick = askFile;
+  accAction.onclick = askFile;
+  accInput.onchange = async () => {
+    const file = accInput.files[0];
+    accInput.value = '';
+    const u = state.user;
+    if (!file || !u) return;
+    const busy = $('#avatar-busy');
+    setMsg('#account-status', CONFIG.TEXT.photoBusy, true);
+    busy.hidden = false;
+    accAction.disabled = true;
+    try {
+      const fresh = await getDoc(doc(db, 'users', u.id));
+      if (fresh.exists() && fresh.data().img_url) {
+        u.img_url = fresh.data().img_url;
+        storage.write(CONFIG.STORAGE_KEYS.user, JSON.stringify(u));
+        renderAccountView(u);
+        return setMsg('#account-status', CONFIG.TEXT.photoOnce);
+      }
+      const blob = await prepareImage(file);
+      const url = await uploadAvatar(blob);
+      await updateDoc(doc(db, 'users', u.id), { img_url: url });
+      await mirror(u.id, { img_url: url });
+      u.img_url = url;
+      storage.write(CONFIG.STORAGE_KEYS.user, JSON.stringify(u));
+      renderAccountView(u);
+      setMsg('#account-status', CONFIG.TEXT.photoDone, true);
+    } catch (err) {
+      console.error(err);
+      setMsg('#account-status', err && err.code === 'permission-denied' ? CONFIG.TEXT.noAccess : describeError(err));
+    } finally {
+      busy.hidden = true;
+      accAction.disabled = false;
     }
-  },
-  clear() {
-    Object.values(CONFIG.STORAGE_KEYS).forEach(key => storage.remove(key));
-  }
-};
-
-const api = async (action, payload = {}) => {
-  if (!apiRule.test(CONFIG.API_URL)) return { ok: false, error: CONFIG.TEXT.notConfigured };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CONFIG.TIMEOUT_MS);
+  };
+}
+async function mirror(uid, data) {
   try {
-    const response = await fetch(CONFIG.API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action, ...payload }),
-      signal: controller.signal,
-      credentials: 'omit',
-      cache: 'no-store'
+    await update(ref(rtdb, 'users/' + uid), data);
+  } catch (e) {
+    console.warn(e);
+  }
+}
+function publicUser(u) {
+  const copy = { ...u };
+  delete copy.password;
+  return copy;
+}
+async function verifyAccessCode(role, code) {
+  if (!code) return false;
+  const wanted = code.trim().toUpperCase();
+  try {
+    const q = query(collection(db, 'scr_code'), where('role', '==', role));
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      const rSnap = await get(ref(rtdb, 'scr_code/' + role));
+      return rSnap.exists() && String(rSnap.val()).trim().toUpperCase() === wanted;
+    }
+    let matched = false;
+    snap.forEach(d => {
+      if (String(d.data().code || '').trim().toUpperCase() === wanted) matched = true;
     });
-    return await response.json();
-  } catch (error) {
-    return { ok: false, error: CONFIG.TEXT.network, network: true };
-  } finally {
-    clearTimeout(timer);
+    return matched;
+  } catch (e) {
+    console.error('Code verification error:', e);
+    if (e && e.code === 'permission-denied') return null;
+    return false;
   }
-};
-
-const toHex = buffer => Array.from(new Uint8Array(buffer), byte => byte.toString(16).padStart(2, '0')).join('');
-
-const derive = async (name, password) => {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', encoder.encode(password.normalize('NFC')), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      hash: 'SHA-256',
-      salt: encoder.encode(name.trim().toLowerCase() + CONFIG.PBKDF2.saltSuffix),
-      iterations: CONFIG.PBKDF2.iterations
-    },
-    key,
-    256
-  );
-  return toHex(bits);
-};
-
-const hasCrypto = () => Boolean(window.crypto && window.crypto.subtle);
-
-const warm = { key: '', promise: null, timer: 0 };
-
-const deriveCached = (name, pass) => {
-  const key = `${name.trim().toLowerCase()}\u0000${pass}`;
-  if (warm.key !== key) {
-    warm.key = key;
-    warm.promise = derive(name, pass).catch(error => {
-      warm.key = '';
-      warm.promise = null;
-      throw error;
+}
+async function handleLogin(e) {
+  e.preventDefault();
+  const name = $('#login-name').value.trim();
+  const pass = $('#login-pass').value;
+  setMsg('#login-status', '');
+  if (!name || !pass) {
+    return setMsg('#login-status', CONFIG.TEXT.fillAll);
+  }
+  setMsg('#login-status', CONFIG.TEXT.loginBusy, true);
+  try {
+    const hash = await hashPassword(name, pass);
+    const q = query(collection(db, 'users'), where('name', '==', name));
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      return setMsg('#login-status', CONFIG.TEXT.badLogin);
+    }
+    let user = null;
+    let uid = null;
+    snap.forEach(d => {
+      user = d.data();
+      uid = d.id;
     });
+    if (!user || user.password !== hash) {
+      return setMsg('#login-status', CONFIG.TEXT.badLogin);
+    }
+    if (user.stat === 'ban') {
+      return setMsg('#login-status', CONFIG.TEXT.blocked);
+    }
+    user.id = uid;
+    storage.write(CONFIG.STORAGE_KEYS.token, uid);
+    storage.write(CONFIG.STORAGE_KEYS.user, JSON.stringify(publicUser(user)));
+    if (user.stat === 'done') {
+      location.replace(CONFIG.HOME_URL);
+    } else {
+      renderAccountView(user);
+    }
+  } catch (err) {
+    console.error(err);
+    setMsg('#login-status', err && err.code === 'permission-denied' ? CONFIG.TEXT.noAccess : CONFIG.TEXT.generic);
   }
-  return warm.promise;
-};
-
-const dropWarm = () => {
-  clearTimeout(warm.timer);
-  warm.key = '';
-  warm.promise = null;
-};
-
-const schedulePrecompute = mode => {
-  clearTimeout(warm.timer);
-  warm.timer = setTimeout(() => {
-    if (!hasCrypto()) return;
-    const prefix = mode === 'login' ? '#login' : '#reg';
-    const name = $(`${prefix}-name`).value.trim();
-    const pass = $(`${prefix}-pass`).value;
-    const rules = CONFIG.RULES;
-    if (!name || !pass) return;
-    if (mode === 'register' && (!nameRule.test(name) || pass.length < rules.passMin || pass.length > rules.passMax)) return;
-    deriveCached(name, pass).catch(() => {});
-  }, CONFIG.PRECOMPUTE_DELAY_MS);
-};
-
-const setStatus = (element, text, tone = 'error') => {
-  element.textContent = text || '';
-  element.dataset.tone = text ? tone : '';
-};
-
-const setBusy = (form, busy, label) => {
-  state.busy = busy;
-  const button = $('button[type="submit"]', form);
-  const text = $('.label', button);
-  if (!button.dataset.label) button.dataset.label = text.textContent;
-  button.disabled = busy;
-  button.setAttribute('aria-busy', String(busy));
-  text.textContent = busy ? label : button.dataset.label;
-};
-
-const flag = (statusElement, text, input) => {
-  setStatus(statusElement, text);
-  if (input) {
-    input.setAttribute('aria-invalid', 'true');
-    input.focus();
+}
+async function handleRegister(e) {
+  e.preventDefault();
+  const name = $('#reg-name').value.trim();
+  const pass = $('#reg-pass').value;
+  const age = Number($('#reg-age').value);
+  const role = ($('input[name="role"]:checked') || {}).value || 'Moderator';
+  const code = role !== 'Moderator' ? $('#reg-code').value.trim() : '';
+  setMsg('#register-status', '');
+  if (!nameRule.test(name)) return setMsg('#register-status', CONFIG.TEXT.badName);
+  if (pass.length < CONFIG.RULES.passMin || pass.length > CONFIG.RULES.passMax) return setMsg('#register-status', CONFIG.TEXT.badPass);
+  if (!Number.isInteger(age) || age < CONFIG.RULES.ageMin || age > CONFIG.RULES.ageMax) return setMsg('#register-status', CONFIG.TEXT.badAge);
+  if (CONFIG.PRIVILEGED_ROLES.includes(role)) {
+    if (!code) return setMsg('#register-status', CONFIG.TEXT.needCode);
+    const ok = await verifyAccessCode(role, code);
+    if (ok === null) return setMsg('#register-status', CONFIG.TEXT.noAccess);
+    if (!ok) return setMsg('#register-status', CONFIG.TEXT.wrongCode);
   }
-};
-
-const showView = (name, focus = false) => {
-  Object.entries(views).forEach(([key, element]) => {
-    element.hidden = key !== name;
-  });
-  if (!focus) return;
-  if (name === 'account') $('#acc-name').focus({ preventScroll: true });
-  if (name === 'auth') $(`#tab-${state.tab}`).focus({ preventScroll: true });
-};
-
-const setTab = name => {
-  state.tab = name;
-  $('.tabs').dataset.active = name;
-  $$('[data-tab]').forEach(button => {
-    const active = button.dataset.tab === name;
-    button.setAttribute('aria-selected', String(active));
-    button.tabIndex = active ? 0 : -1;
-  });
-  $('#form-login').hidden = name !== 'login';
-  $('#form-register').hidden = name !== 'register';
-  setStatus($('#login-status'), '');
-  setStatus($('#register-status'), '');
-};
-
-const syncRole = () => {
-  const role = $('input[name="role"]:checked').value;
-  const open = CONFIG.PRIVILEGED_ROLES.includes(role);
-  const reveal = $('#code-reveal');
-  reveal.dataset.open = String(open);
-  reveal.inert = !open;
-  if (!open) $('#reg-code').value = '';
-};
-
-const fileError = file => !file || !/^image\//.test(file.type) || file.size > CONFIG.AVATAR.maxBytes || (file.type === 'image/gif' && file.size > CONFIG.AVATAR.animatedMax);
-
-const readFile = file => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result));
-  reader.onerror = () => reject(reader.error);
-  reader.readAsDataURL(file);
-});
-
-const prepareAvatar = async file => {
-  if (file.type === 'image/gif') return readFile(file);
-  const bitmap = await createImageBitmap(file);
-  const size = CONFIG.AVATAR.size;
-  const side = Math.min(bitmap.width, bitmap.height);
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const context = canvas.getContext('2d');
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, size, size);
-  context.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, size, size);
-  if (typeof bitmap.close === 'function') bitmap.close();
-  return canvas.toDataURL('image/jpeg', CONFIG.AVATAR.quality);
-};
-
-const setAvatar = (src, name) => {
-  const image = $('#avatar-img');
-  const fallback = $('#avatar-fallback');
-  fallback.textContent = (Array.from(name || '')[0] || '').toUpperCase();
-  if (src) {
-    image.src = src;
-    image.hidden = false;
-    fallback.hidden = true;
-  } else {
-    image.removeAttribute('src');
-    image.hidden = true;
-    fallback.hidden = false;
+  setMsg('#register-status', CONFIG.TEXT.registerBusy, true);
+  try {
+    const q = query(collection(db, 'users'), where('name', '==', name));
+    const existSnap = await getDocs(q);
+    if (!existSnap.empty) {
+      return setMsg('#register-status', CONFIG.TEXT.nameTaken);
+    }
+    const hash = await hashPassword(name, pass);
+    const uid = 'usr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    const initialStat = role === 'OWNER' ? 'done' : 'm3lk';
+    let imgUrl = '';
+    let photoFailed = false;
+    if (state.regBlob) {
+      setMsg('#register-status', CONFIG.TEXT.photoBusy, true);
+      try {
+        imgUrl = await uploadAvatar(state.regBlob);
+      } catch (upErr) {
+        console.error(upErr);
+        photoFailed = true;
+      }
+    }
+    const newUser = {
+      id: uid,
+      name,
+      password: hash,
+      age,
+      role,
+      stat: initialStat,
+      img_url: imgUrl,
+      msg: '',
+      msg2: '',
+      msg3: '',
+      created_at: new Date().toISOString()
+    };
+    await setDoc(doc(db, 'users', uid), newUser);
+    try {
+      await set(ref(rtdb, 'users/' + uid), newUser);
+    } catch (rtErr) {
+      console.warn(rtErr);
+    }
+    storage.write(CONFIG.STORAGE_KEYS.token, uid);
+    storage.write(CONFIG.STORAGE_KEYS.user, JSON.stringify(publicUser(newUser)));
+    if (newUser.stat === 'done') {
+      location.replace(CONFIG.HOME_URL);
+    } else {
+      renderAccountView(newUser);
+      if (photoFailed) setMsg('#account-status', CONFIG.TEXT.photoLater);
+    }
+  } catch (err) {
+    console.error(err);
+    setMsg('#register-status', err && err.code === 'permission-denied' ? CONFIG.TEXT.noAccess : CONFIG.TEXT.generic);
   }
-};
-
-const renderAvatar = user => {
-  const usable = typeof user.img === 'string' && /^https:\/\//.test(user.img);
-  setAvatar(usable ? user.img : '', user.name);
-  $('#avatar-btn').dataset.role = user.role;
-  $('#avatar-action .label').textContent = CONFIG.TEXT.avatarAdd;
-  $('#avatar-action').hidden = usable;
-  $('#avatar-btn').disabled = usable;
-  $('#avatar-btn .avatar-badge').hidden = usable;
-};
-
-const setAvatarBusy = busy => {
-  state.uploading = busy;
-  $('#avatar-busy').hidden = !busy;
-  $('#avatar-action').disabled = busy;
-  if (busy) $('#avatar-action .label').textContent = CONFIG.TEXT.avatarBusy;
-};
-
-const renderMessages = messages => {
+}
+function renderAccountView(u) {
+  state.user = u;
+  showView('account');
+  $('#acc-name').textContent = u.name;
+  $('#acc-role').textContent = u.role;
+  $('#acc-role').dataset.role = u.role;
+  $('#avatar-btn').dataset.role = u.role;
+  $('#acc-age').textContent = u.age + ' سنة';
+  $('#acc-stat').textContent = CONFIG.TEXT.stat[u.stat] || u.stat;
+  $('#acc-stat').dataset.stat = u.stat;
+  $('#avatar-fallback').textContent = (Array.from(u.name)[0] || '').toUpperCase();
+  const img = $('#avatar-img');
+  img.onerror = () => { img.hidden = true; };
+  img.hidden = !u.img_url;
+  if (u.img_url) img.src = u.img_url;
+  $('#avatar-action').hidden = Boolean(u.img_url);
+  $('#pending-note').hidden = (u.stat === 'done');
+  $('#enter-link').hidden = (u.stat !== 'done');
+  const msgs = [u.msg, u.msg2, u.msg3].filter(Boolean);
   const list = $('#msg-list');
-  list.replaceChildren();
-  messages.forEach(message => {
-    const item = document.createElement('li');
-    const icon = document.createElement('i');
-    icon.className = 'fa-regular fa-envelope';
-    icon.setAttribute('aria-hidden', 'true');
-    const text = document.createElement('span');
-    text.textContent = message;
-    item.append(icon, text);
-    list.append(item);
-  });
-  $('#msg-empty').hidden = messages.length > 0;
-  list.hidden = messages.length === 0;
-};
-
-const renderAccount = user => {
-  $('#acc-name').textContent = user.name;
-  const role = $('#acc-role');
-  role.textContent = user.role;
-  role.dataset.role = user.role;
-  $('#acc-age').textContent = `${user.age} ${CONFIG.TEXT.yearsSuffix}`;
-  const stat = $('#acc-stat');
-  stat.textContent = CONFIG.TEXT.stat[user.stat] || user.stat;
-  stat.dataset.stat = user.stat;
-  const approved = user.stat === CONFIG.TEXT.states.approved;
-  $('#pending-note').hidden = approved;
-  const enter = $('#enter-link');
-  if (approved) {
-    enter.setAttribute('href', CONFIG.HOME_URL);
-    enter.removeAttribute('aria-disabled');
-    enter.removeAttribute('tabindex');
-  } else {
-    enter.removeAttribute('href');
-    enter.setAttribute('aria-disabled', 'true');
-    enter.setAttribute('tabindex', '-1');
-  }
-  renderAvatar(user);
-  renderMessages(Array.isArray(user.msgs) ? user.msgs : []);
-};
-
-const clearDraft = () => {
-  state.draft = '';
-  $('#reg-avatar-img').removeAttribute('src');
-  $('#reg-avatar-img').hidden = true;
-  $('#reg-avatar-fallback').hidden = false;
-};
-
-const uploadAvatar = async dataUrl => {
-  if (state.uploading) return;
-  const status = $('#account-status');
-  const user = session.user();
-  setStatus(status, '');
-  setAvatarBusy(true);
-  setAvatar(dataUrl, user ? user.name : '');
-  const result = await api('avatar', { token: session.token(), image: dataUrl.split(',')[1] });
-  setAvatarBusy(false);
-  if (result.ok) {
-    session.save(null, result.user);
-    renderAccount(result.user);
-    setStatus(status, CONFIG.TEXT.imageDone, 'ok');
+  list.replaceChildren(...msgs.map(m => { const li = document.createElement('li'); li.textContent = m; return li; }));
+  $('#msg-empty').hidden = msgs.length > 0;
+  $('#logout-btn').onclick = () => {
+    storage.remove(CONFIG.STORAGE_KEYS.token);
+    storage.remove(CONFIG.STORAGE_KEYS.user);
+    location.reload();
+  };
+}
+async function checkStoredSession() {
+  const token = storage.read(CONFIG.STORAGE_KEYS.token);
+  if (!token) {
+    showView('auth');
     return;
   }
-  if (user) renderAvatar(user);
-  if (result.auth) return expire(result.error);
-  setStatus(status, result.error || CONFIG.TEXT.generic);
-};
-
-const finishAuth = result => {
-  const draft = state.draft;
-  session.save(result.token, result.user);
-  dropWarm();
-  $$('form').forEach(form => form.reset());
-  clearDraft();
-  syncRole();
-  renderAccount(result.user);
-  showView('account', true);
-  if (draft) uploadAvatar(draft);
-};
-
-const expire = message => {
-  session.clear();
-  dropWarm();
-  setTab('login');
-  showView('auth', true);
-  setStatus($('#login-status'), message || CONFIG.TEXT.sessionExpired, 'info');
-};
-
-const onLogin = async event => {
-  event.preventDefault();
-  if (state.busy) return;
-  const form = event.currentTarget;
-  const status = $('#login-status');
-  const nameInput = $('#login-name');
-  const passInput = $('#login-pass');
-  const name = nameInput.value.trim();
-  const pass = passInput.value;
-  setStatus(status, '');
-  if (!name) return flag(status, CONFIG.TEXT.fillAll, nameInput);
-  if (!pass) return flag(status, CONFIG.TEXT.fillAll, passInput);
-  if (!hasCrypto()) return setStatus(status, CONFIG.TEXT.cryptoMissing);
-  setBusy(form, true, CONFIG.TEXT.loginBusy);
   try {
-    const pw = await deriveCached(name, pass);
-    const result = await api('login', { name, pw });
-    if (!result.ok) return setStatus(status, result.error || CONFIG.TEXT.generic);
-    finishAuth(result);
-  } finally {
-    setBusy(form, false);
-  }
-};
-
-const onRegister = async event => {
-  event.preventDefault();
-  if (state.busy) return;
-  const form = event.currentTarget;
-  const status = $('#register-status');
-  const nameInput = $('#reg-name');
-  const passInput = $('#reg-pass');
-  const ageInput = $('#reg-age');
-  const codeInput = $('#reg-code');
-  const name = nameInput.value.trim();
-  const pass = passInput.value;
-  const age = Number(ageInput.value);
-  const role = $('input[name="role"]:checked', form).value;
-  const code = codeInput.value.trim();
-  const rules = CONFIG.RULES;
-  setStatus(status, '');
-  if (!nameRule.test(name)) return flag(status, CONFIG.TEXT.badName, nameInput);
-  if (pass.length < rules.passMin || pass.length > rules.passMax) return flag(status, CONFIG.TEXT.badPass, passInput);
-  if (!Number.isInteger(age) || age < rules.ageMin || age > rules.ageMax) return flag(status, CONFIG.TEXT.badAge, ageInput);
-  const privileged = CONFIG.PRIVILEGED_ROLES.includes(role);
-  if (privileged && !code) return flag(status, CONFIG.TEXT.needCode, codeInput);
-  if (!hasCrypto()) return setStatus(status, CONFIG.TEXT.cryptoMissing);
-  setBusy(form, true, CONFIG.TEXT.registerBusy);
-  try {
-    const pw = await deriveCached(name, pass);
-    const payload = { name, pw, age, role };
-    if (privileged) payload.code = code;
-    const result = await api('register', payload);
-    if (!result.ok) return setStatus(status, result.error || CONFIG.TEXT.generic);
-    finishAuth(result);
-  } finally {
-    setBusy(form, false);
-  }
-};
-
-const onDraftPick = async event => {
-  const input = event.currentTarget;
-  const file = input.files && input.files[0];
-  input.value = '';
-  if (!file) return;
-  const status = $('#register-status');
-  if (fileError(file)) return setStatus(status, CONFIG.TEXT.badImage);
-  try {
-    const dataUrl = await prepareAvatar(file);
-    state.draft = dataUrl;
-    const image = $('#reg-avatar-img');
-    image.src = dataUrl;
-    image.hidden = false;
-    $('#reg-avatar-fallback').hidden = true;
-    setStatus(status, '');
-  } catch (error) {
-    setStatus(status, CONFIG.TEXT.badImage);
-  }
-};
-
-const onAvatarPick = async event => {
-  const input = event.currentTarget;
-  const file = input.files && input.files[0];
-  input.value = '';
-  if (!file || state.uploading) return;
-  const status = $('#account-status');
-  if (fileError(file)) return setStatus(status, CONFIG.TEXT.badImage);
-  try {
-    uploadAvatar(await prepareAvatar(file));
-  } catch (error) {
-    setStatus(status, CONFIG.TEXT.badImage);
-  }
-};
-
-const onLogout = () => {
-  session.clear();
-  dropWarm();
-  $$('form').forEach(form => form.reset());
-  clearDraft();
-  syncRole();
-  setStatus($('#account-status'), '');
-  setTab('login');
-  showView('auth', true);
-};
-
-const onToggle = event => {
-  const button = event.currentTarget;
-  const input = document.getElementById(button.dataset.toggle);
-  const reveal = input.type === 'password';
-  input.type = reveal ? 'text' : 'password';
-  button.setAttribute('aria-label', reveal ? CONFIG.TEXT.hideSecret : CONFIG.TEXT.showSecret);
-  button.firstElementChild.className = reveal ? 'fa-regular fa-eye-slash fa-fw' : 'fa-regular fa-eye fa-fw';
-};
-
-const onTabKeys = event => {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-  const next = state.tab === 'login' ? 'register' : 'login';
-  setTab(next);
-  $(`#tab-${next}`).focus();
-};
-
-const bind = () => {
-  $$('[data-tab]').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
-  $('.tabs').addEventListener('keydown', onTabKeys);
-  $('#form-login').addEventListener('submit', onLogin);
-  $('#form-register').addEventListener('submit', onRegister);
-  $('#form-login').addEventListener('input', () => schedulePrecompute('login'));
-  $('#form-register').addEventListener('input', () => schedulePrecompute('register'));
-  $$('input[name="role"]').forEach(radio => radio.addEventListener('change', syncRole));
-  $$('[data-toggle]').forEach(button => button.addEventListener('click', onToggle));
-  $('#reg-avatar-btn').addEventListener('click', () => $('#reg-avatar-input').click());
-  $('#reg-avatar-input').addEventListener('change', onDraftPick);
-  $('#avatar-btn').addEventListener('click', () => $('#avatar-input').click());
-  $('#avatar-action').addEventListener('click', () => $('#avatar-input').click());
-  $('#avatar-input').addEventListener('change', onAvatarPick);
-  $('#logout-btn').addEventListener('click', onLogout);
-  $('#avatar-img').addEventListener('error', () => {
-    $('#avatar-img').hidden = true;
-    $('#avatar-fallback').hidden = false;
-  });
-  document.addEventListener('input', event => {
-    if (event.target instanceof HTMLInputElement) event.target.removeAttribute('aria-invalid');
-  });
-};
-
-const boot = async () => {
-  bind();
-  syncRole();
-  const token = session.token();
-  const cached = session.user();
-  if (token && cached) {
-    renderAccount(cached);
-    showView('account');
-    if (Date.now() - session.checkedAt() < CONFIG.FRESH_MS) return;
-    const result = await api('session', { token });
-    if (result.ok) {
-      session.save(result.token, result.user);
-      renderAccount(result.user);
-    } else if (result.auth) {
-      expire(result.error);
+    const snap = await getDoc(doc(db, 'users', token));
+    if (snap.exists()) {
+      const u = snap.data();
+      u.id = snap.id;
+      if (u.stat === 'ban') {
+        storage.remove(CONFIG.STORAGE_KEYS.token);
+        storage.remove(CONFIG.STORAGE_KEYS.user);
+        showView('auth');
+        setMsg('#login-status', CONFIG.TEXT.blocked);
+        return;
+      }
+      storage.write(CONFIG.STORAGE_KEYS.user, JSON.stringify(publicUser(u)));
+      if (u.stat === 'done') {
+        location.replace(CONFIG.HOME_URL);
+        return;
+      }
+      renderAccountView(u);
+    } else {
+      showView('auth');
     }
+  } catch (e) {
+    console.warn(e);
+    showView('auth');
+    if (e && e.code === 'permission-denied') setMsg('#login-status', CONFIG.TEXT.noAccess);
+  }
+}
+initTabs();
+initAvatars();
+$('#form-login').onsubmit = handleLogin;
+$('#form-register').onsubmit = handleRegister;
+authReady.then(user => {
+  if (!user) {
+    showView('auth');
+    setMsg('#login-status', accessText());
+    setMsg('#register-status', accessText());
     return;
   }
-  if (token) {
-    const result = await api('session', { token });
-    if (result.ok) {
-      session.save(result.token, result.user);
-      renderAccount(result.user);
-      showView('account');
-      return;
-    }
-    if (result.auth) session.clear();
-  }
-  showView('auth');
-  api('warm');
-};
-
-boot();
+  checkStoredSession();
+});
