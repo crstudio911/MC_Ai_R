@@ -1,5 +1,5 @@
 const CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/AKfycbxKXwbR7ejajobrI1iSxrZHuXRk_OBiOuZ86osAddZW4oxzgXcV7wxColCFwr_NVLlw/exec',
+  API_URL: 'https://script.google.com/macros/s/AKfycbxG1EEHjQf3UtagnjmhS1ntUPZujXOp5wYsMWhraFbxw3yZ6UxO0n2UHivAZ2kXL99V/exec',
   API_HOST_PATTERN: '^https://script\\.google\\.com/',
   HOME_URL: 'main/main.html',
   STORAGE_KEYS: { token: 'mcr_token', user: 'mcr_user', checked: 'mcr_checked' },

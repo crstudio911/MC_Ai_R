@@ -1,9 +1,10 @@
 const C = {
-  API: 'https://script.google.com/macros/s/AKfycbxKXwbR7ejajobrI1iSxrZHuXRk_OBiOuZ86osAddZW4oxzgXcV7wxColCFwr_NVLlw/exec',
+  API: 'https://script.google.com/macros/s/AKfycbxG1EEHjQf3UtagnjmhS1ntUPZujXOp5wYsMWhraFbxw3yZ6UxO0n2UHivAZ2kXL99V/exec',
   LOGIN: '../index.html',
   K: { t: 'mcr_token', u: 'mcr_user', c: 'mcr_checked', a: 'mcr_auto', n: 'mcr_nav' },
   WARM_MS: 300000,
   NET: 'تعذر الاتصال بالخادم',
+  ERR: { off: 'لا يوجد اتصال بالإنترنت', slow: 'الخادم تأخر في الرد، حاول مرة أخرى', busy: 'الخادم مشغول حاليا، حاول بعد لحظات', net: 'تعذر الاتصال بالخادم' },
   ROLE: { OWNER: 'المالك', Admen: 'أدمن', Moderator: 'موديريتور' },
   STAT: { m3lk: 'معلق', done: 'مفعل', ban: 'محظور', active: 'نشط', inactive: 'متوقف' },
   KIND: { trial: 'كود تجريبي', regular: 'كود حقيقي', recharge: 'شحن' }
@@ -31,25 +32,53 @@ const leave = () => {
   location.replace(C.LOGIN);
 };
 
-const api = async (action, payload = {}) => {
+const rid = () => Array.from(crypto.getRandomValues(new Uint8Array(14)), n => (n % 36).toString(36)).join('');
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const gate = { n: 0, q: [] };
+const slot = () => new Promise(res => {
+  const take = () => { gate.n += 1; res(); };
+  if (gate.n < 3) take(); else gate.q.push(take);
+});
+const free = () => {
+  gate.n -= 1;
+  const next = gate.q.shift();
+  if (next) next();
+};
+
+const once = async (body, ms) => {
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), 30000);
+  const t = setTimeout(() => ctl.abort(), ms);
   try {
-    const r = await fetch(C.API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action, token: store.get(C.K.t), ...payload }),
-      signal: ctl.signal,
-      credentials: 'omit',
-      cache: 'no-store'
-    });
-    const out = await r.json();
-    if (out.auth) leave();
-    return out;
+    const r = await fetch(C.API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
+    const text = await r.text();
+    try { return { out: JSON.parse(text) }; } catch (e) { return { fail: 'busy' }; }
   } catch (e) {
-    return { ok: false, error: C.NET };
+    return { fail: ctl.signal.aborted ? 'slow' : 'net' };
   } finally {
     clearTimeout(t);
+  }
+};
+
+const api = async (action, payload = {}) => {
+  const body = JSON.stringify({ action, token: store.get(C.K.t), rid: rid(), ...payload });
+  await slot();
+  try {
+    let last = 'net';
+    for (let i = 0; i < 4; i += 1) {
+      if (i) await wait(700 * i + Math.random() * 300);
+      if (navigator.onLine === false) { last = 'off'; continue; }
+      const x = await once(body, 45000);
+      if (x.out) {
+        if (x.out.pending) { last = 'busy'; continue; }
+        if (x.out.auth) leave();
+        return x.out;
+      }
+      last = x.fail;
+      if (last === 'slow' && i >= 1) break;
+    }
+    return { ok: false, error: C.ERR[last] || C.NET };
+  } finally {
+    free();
   }
 };
 const rs = (op, p = {}) => api('rs', { op, ...p });
@@ -158,7 +187,7 @@ const paintMe = () => {
 const polish = () => requestAnimationFrame(() => requestAnimationFrame(() => $$('[data-w]').forEach(e => { e.style.width = e.dataset.w + '%'; })));
 const stage = html => { $('#stage').innerHTML = html; $('#stage').onclick = null; polish(); };
 const skeleton = () => stage('<div class="skel"><span class="sk w"></span><span class="sk h"></span><span class="sk h"></span></div>');
-const fault = r => `<p class="msg">${esc((r && r.error) || C.NET)}</p>`;
+const fault = r => `<div class="fault"><p class="msg">${esc((r && r.error) || C.NET)}</p><button type="button" class="btn ghost sm" data-retry><i class="fa-solid fa-rotate"></i>إعادة المحاولة</button></div>`;
 const head = (title, sub = '') => `<div class="ph"><div><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div></div>`;
 
 const go = async name => {
@@ -483,7 +512,7 @@ const boot = async () => {
   }
   const r = await pending;
   if (!r.ok) {
-    if (!r.auth && !S.user) stage(fault(r));
+    if (!r.auth && !S.user) stage(`<div class="panel"><div class="pb">${fault(r)}</div></div>`);
     return;
   }
   if (r.token) store.set(C.K.t, r.token);
@@ -494,5 +523,20 @@ const boot = async () => {
   if (changed) start();
   else paintMe();
 };
+
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-retry]')) {
+    if (S.user) go(S.view);
+    else location.reload();
+  }
+});
+window.addEventListener('online', () => {
+  if ($('[data-retry]')) {
+    if (S.user) go(S.view);
+    else location.reload();
+  }
+});
+setInterval(() => { if (!document.hidden && store.get(C.K.t)) api('warm'); }, 240000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && store.get(C.K.t)) api('warm'); });
 
 boot();
